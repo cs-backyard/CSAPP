@@ -182,12 +182,14 @@ void eval(char *cmdline)
 {
     //first i will parse the cmdline to **args
     char* argv[MAXARGS];
+    char buff[MAXLINE];
     init_argv(argv);
 
-    int res = parseline(cmdline, argv);
+    strcpy(buff, cmdline);
+    int bg = parseline(buff, argv);
 
     //cmdline is none
-    if(res == 1 && argv[0] == NULL){
+    if(argv[0] == NULL){
         return;
     }
 
@@ -199,16 +201,34 @@ void eval(char *cmdline)
     }
 
     //i should fork and run it in child process
-
-
-
-    printf("\nres: %d\n", res);
-    for(int i=0; argv[i]!=NULL; i++){
-        printf("argv[%d]: %s\n", i, argv[i]);
+    pid_t pid = fork();
+    if(pid < 0){
+        unix_error("fork error");
     }
 
-    printf("cmdline: %s\n", cmdline);
-    //exit(1);
+    if(pid == 0){
+        printf("run child process:\n");
+        for(int i=0;argv[i]!=NULL;i++){
+            printf("argv[%d]: %s\n", i , argv[i]);
+        }
+        if(execve(argv[0], argv, environ) < 0){
+            unix_error("execve error");
+            printf("%s: command not found\n", argv[0]);
+            exit(0);
+        }
+    }
+    
+    //it is a fg cmd
+    if(bg == 0){
+        int status;
+        if((waitpid(pid, &status, 0)) < 0){
+            unix_error("waitpid error");
+        }
+    }else{
+        printf("bg command: PID[%d] %s\n", pid, argv[0]);
+        addjob(jobs, pid, BG, cmdline);
+    }    
+    
     return;
 }
 
@@ -292,6 +312,7 @@ int builtin_cmd(char **argv)
     }
     if(strcmp("jobs", argv[0]) == 0){
         printf("run builtin command: jobs\n");
+        listjobs(jobs);
         return 1;
     }
     if(strcmp("fg", argv[0]) == 0){
@@ -356,6 +377,14 @@ void sigchld_handler(int sig)
  */
 void sigint_handler(int sig) 
 {
+    printf("singint_handler: interpret all fg child process!\n");
+    for(int i=0; i<MAXJOBS; i++){
+        if(jobs[i].state == FG){
+            clearjob(&jobs[i]);
+            nextjid = maxjid(jobs) + 1;
+            return;
+        }
+    }
     return;
 }
 
@@ -366,6 +395,13 @@ void sigint_handler(int sig)
  */
 void sigtstp_handler(int sig) 
 {
+    printf("sigtstp_hander: stop fg process and turn it to ST state!\n");
+    for(int i=0; i<MAXJOBS; i++){
+        if(jobs[i].state == FG){
+            jobs[i].state = ST;
+            return;
+        }
+    }
     return;
 }
 
