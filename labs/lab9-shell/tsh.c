@@ -315,14 +315,17 @@ int builtin_cmd(char **argv)
         listjobs(jobs);
         return 1;
     }
-    if(strcmp("fg", argv[0]) == 0){
-        printf("run builtin command: fg\n");
+    if(strcmp("fg", argv[0]) == 0 || strcmp("bg", argv[0]) == 0){
+        //printf("run builtin command: fg\n");
+        do_bgfg(argv);
         return 1;
     }
+    /*
     if(strcmp("bg", argv[0]) == 0){
         printf("run builtin command: bg\n");
         return 1;
     }
+    */
 
     return 0;     /* not a builtin command */
 }
@@ -332,6 +335,36 @@ int builtin_cmd(char **argv)
  */
 void do_bgfg(char **argv) 
 {
+    if(argv == NULL || argv[0] == NULL || argv[1] == NULL){
+        return;
+    } 
+    //find the target job
+    int pj = atoi(argv[1]);
+    struct job_t* target = NULL;
+    
+    if(pj <= MAXJOBS){
+        target = getjobjid(jobs, pj);
+    }else{
+        target = getjobpid(jobs, pj);
+    }
+    
+    if(target == NULL){
+        return;
+    }
+    
+    //if I input "bg jid/pid"
+    if(strcmp("bg", argv[0]) == 0){
+        //find target job and turn ST -> BG
+        if(target->state == ST){
+            target->state = BG;
+        }
+        return;
+    }
+
+    //if I input "fg jid/pid"
+    if(target->state == ST || target->state == BG){
+        target->state = FG;
+    }
     return;
 }
 
