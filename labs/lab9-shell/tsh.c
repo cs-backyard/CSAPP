@@ -316,16 +316,9 @@ int builtin_cmd(char **argv)
         return 1;
     }
     if(strcmp("fg", argv[0]) == 0 || strcmp("bg", argv[0]) == 0){
-        //printf("run builtin command: fg\n");
         do_bgfg(argv);
         return 1;
     }
-    /*
-    if(strcmp("bg", argv[0]) == 0){
-        printf("run builtin command: bg\n");
-        return 1;
-    }
-    */
 
     return 0;     /* not a builtin command */
 }
@@ -411,13 +404,12 @@ void sigchld_handler(int sig)
 void sigint_handler(int sig) 
 {
     printf("singint_handler: interpret all fg child process!\n");
-    for(int i=0; i<MAXJOBS; i++){
-        if(jobs[i].state == FG){
-            clearjob(&jobs[i]);
-            nextjid = maxjid(jobs) + 1;
-            return;
-        }
+    pid_t fg = fgpid(jobs);
+    struct job_t* fgjob = getjobpid(jobs, fg);
+    if(fgjob == NULL){
+        return;
     }
+    clearjob(fgjob);
     return;
 }
 
@@ -429,12 +421,12 @@ void sigint_handler(int sig)
 void sigtstp_handler(int sig) 
 {
     printf("sigtstp_hander: stop fg process and turn it to ST state!\n");
-    for(int i=0; i<MAXJOBS; i++){
-        if(jobs[i].state == FG){
-            jobs[i].state = ST;
-            return;
-        }
+    pid_t fg = fgpid(jobs);
+    struct job_t* fgjob = getjobpid(jobs, fg);
+    if(fgjob == NULL){
+        return;
     }
+    fgjob->state = ST;
     return;
 }
 
