@@ -199,6 +199,10 @@ void eval(char *cmdline)
         //builtin_cmd function will run this command
         return;
     }
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGCHLD);
+    sigprocmask(SIG_BLOCK, &mask, NULL);
 
     //i should fork and run it in child process
     pid_t pid = fork();
@@ -207,24 +211,37 @@ void eval(char *cmdline)
     }
 
     if(pid == 0){
+        //child process can't block mask
+        sigprocmask(SIG_UNBLOCK, &mask, NULL);
+        if(setpgid(0, 0) < 0){
+            unix_error("setpgid error");
+        }
+        /*
         printf("run child process:\n");
         for(int i=0;argv[i]!=NULL;i++){
             printf("argv[%d]: %s\n", i , argv[i]);
         }
+        */
         if(execve(argv[0], argv, environ) < 0){
             unix_error("execve error");
-            printf("%s: command not found\n", argv[0]);
             exit(0);
         }
     }
     
+    if(bg == 0){
+        addjob(jobs, pid,fg, cmdline);
+    }else{
+        addjob(jobs, pid, bg, cmdline);
+    }
+
+    sigprocmask(SIG_UNBLOCK, &mask, NULL);
+
     //it is a fg cmd
     if(bg == 0){
-        int status;
-        if((waitpid(pid, &status, 0)) < 0){
-            unix_error("waitpid error");
-        }
-    }else{
+        waitfg(pid);
+        return;
+    }
+    else{
         printf("bg command: PID[%d] %s\n", pid, argv[0]);
         addjob(jobs, pid, BG, cmdline);
     }    
@@ -366,6 +383,7 @@ void do_bgfg(char **argv)
  */
 void waitfg(pid_t pid)
 {
+    while(pid == fgpid(jobs));
     return;
 }
 
@@ -393,6 +411,11 @@ void init_argv(char** argv){
  */
 void sigchld_handler(int sig) 
 {
+    pid_t pid;
+    int status;
+    while((pid = waitpid(-1, &status, WNOHANG|WUNTRACEED)) > 0){
+
+    }
     return;
 }
 
