@@ -207,7 +207,7 @@ void eval(char *cmdline)
 
     sigset_t mask_one, mask_all, prev_all;
     sigemptyset(&mask_one);
-    sigaddset(&mask, SIGCHLD);
+    sigaddset(&mask_one, SIGCHLD);
     sigfillset(&mask_all);
     sigprocmask(SIG_BLOCK, &mask_one, &prev_all);
 
@@ -237,22 +237,21 @@ void eval(char *cmdline)
     //block all signal
     sigprocmask(SIG_SETMASK, &mask_all, NULL);
     addjob(jobs, pid, state, cmdline);
-    sigprocmask(SIG_SETMASK, &prev_all, NULL);
+    sigprocmask(SIG_SETMASK, &mask_one, NULL);
 
     //it is a fg cmd
     if (state == FG)
     {
         waitfg(pid);
-        return;
     }
     else
     {
         sigprocmask(SIG_SETMASK, &mask_all, NULL);
         struct job_t* bg_job = getjobpid(jobs, pid); 
-        printf("[%d] (%d) %s\n", bg_job->jid, bg_job->pid, bg_job->cmdline);
-        sigprocmask(SIG_SETMASK, &prev_all, NULL);
+        printf("[%d] (%d) %s", bg_job->jid, bg_job->pid, bg_job->cmdline);
+        //sigprocmask(SIG_SETMASK, &prev_all, NULL);
     }
-
+    sigprocmask(SIG_SETMASK, &prev_all, NULL);
     return;
 }
 
@@ -375,7 +374,7 @@ void do_bgfg(char **argv)
     sigset_t mask_all, prev_all;
     sigfillset(&mask_all);
     
-    if(strcmp(types[0], "%") == 0){
+    if(types[0] == '%'){
         waybypid = 0;
         pj = atoi(&types[1]);
     }else{
@@ -437,7 +436,7 @@ void waitfg(pid_t pid)
     sigemptyset(&mask);
 
     fg_pid = 0;
-    while(fg_pid!=0){
+    while(fg_pid == 0){
         sigsuspend(&mask);
     } 
     
@@ -473,7 +472,7 @@ void sigchld_handler(int sig)
     int status;
     sigset_t mask_all, prev_all;
     sigfillset(&mask_all);
-    while ((pid = waitpid(-1, &status, WNOHANG | WIFSIGNALED)) > 0)
+    while ((pid = waitpid(-1, &status, WNOHANG | WUNTRACED)) > 0)
     {
         sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
         struct job_t* target = getjobpid(jobs, pid);
@@ -484,13 +483,13 @@ void sigchld_handler(int sig)
         }
         //exit normally
         if(WIFEXITED(status)){
-            printf("Job [%d] (%d) terminated by return/exit %d", target->jid, target->pid, WEXITSTATUS(status));
+            //printf("Job [%d] (%d) terminated by return/exit %d\n", target->jid, target->pid, WEXITSTATUS(status));
             deletejob(jobs, target->pid);
         }else if(WIFSIGNALED(status)){
-            printf("Job [%d] (%d) terminated by signal %d", target->jid, target->pid, WTERMSIG(status));
+            printf("Job [%d] (%d) terminated by signal %d\n", target->jid, target->pid, WTERMSIG(status));
             deletejob(jobs, target->pid);
         }else if(WIFSTOPPED(status)){
-            printf("Job [%d] (%d) stopped by signal %d", target->jid, target->pid, WSTOPSIG(status));
+            printf("Job [%d] (%d) stopped by signal %d\n", target->jid, target->pid, WSTOPSIG(status));
             target->state = ST;
         }
         sigprocmask(SIG_SETMASK, &prev_all, NULL);
@@ -513,7 +512,7 @@ void sigint_handler(int sig)
     pid_t fg = fgpid(jobs);
     if (fg != 0)
     {
-        kill(-fg_job->pid, SIGINT);
+        kill(-fg, SIGINT);
     }
     sigprocmask(SIG_SETMASK, &prev_all, NULL);
     errno = olderrno;
@@ -534,7 +533,7 @@ void sigtstp_handler(int sig)
     pid_t fg = fgpid(jobs);
     if (fg != 0)
     {
-        kill(-fg_job->pid, SIGTSTP);
+        kill(-fg, SIGTSTP);
     }
     sigprocmask(SIG_SETMASK, &prev_all, NULL);
     errno = olderrno;
