@@ -189,8 +189,11 @@ void eval(char *cmdline){
     }
     if(pid == 0){
         // change group id
+        setpgid(0, 0)
         // change mask
         // change sig handler
+        signal(SIGINT, SIG_DFT);
+        signal(SIGTSTP, SIG_DFT);
         execvp(argv[0], argv);
         exit(1);
     }
@@ -334,6 +337,22 @@ void waitfg(pid_t pid){
  *     currently running children to terminate.  
  */
 void sigchld_handler(int sig){
+    int wstatus = 0;
+    int pid = 0;
+    while((pid = waitpid(-1, &wstatus, WNOHANG | WUNTRACED | WCONTINUED)) > 0){
+        if(WIFEXITED(wstatus)){
+            printf("exit normally, exit status = %d\n", WEXITSTATUS(wstatus));
+        }else if(WIFSIGNALED(wstatus)){
+            printf("exit by signal, cause signal number = %d\n", WTERMSIG(wstatus));
+        }else if(WIFSTOPPED(wstatus)){
+            printf("stop by signal, cause signal number = %d\n", WSTOPSIG(wstatus));
+            //kill(pid, SIGCONT);
+        }else if(WIFCONTINUED(wstatus)){
+            printf("SIGCONT!\n");
+        }else{
+            printf("what happens?\n");
+        }
+    }
     return;
 }
 
@@ -345,7 +364,7 @@ void sigchld_handler(int sig){
 void sigint_handler(int sig){
     pid_t pid = fgpid(jobs);
     if(pid){
-        kill(pid, SIGKILL);
+        kill(pid, SIGINT);
     }
     return;
 }
@@ -356,6 +375,10 @@ void sigint_handler(int sig){
  *     foreground job by sending it a SIGTSTP.  
  */
 void sigtstp_handler(int sig){
+    pid_t pid = fgpid(jobs);
+    if(pid){
+        kill(pid, SIGTSTP);
+    }
     return;
 }
 
