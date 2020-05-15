@@ -180,6 +180,12 @@ void eval(char *cmdline){
     if(builtin_cmd(argv)){
         return;
     }
+    sigset_t set, prev_set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGINT);
+    sigaddset(&set, SIGTSTP);
+    sigaddset(&set, SIGCHLD);
+    sigprocmask(SIG_BLOCK, &set, &prev_set);
 
     // it's a fg or bg job
     pid_t pid = fork();
@@ -189,40 +195,25 @@ void eval(char *cmdline){
     }
     if(pid == 0){
         // change group id
-        setpgid(0, 0)
-        // change mask
+        setpgid(0, 0);
         // change sig handler
-        signal(SIGINT, SIG_DFT);
-        signal(SIGTSTP, SIG_DFT);
+        signal(SIGINT, SIG_DFL);
+        signal(SIGTSTP, SIG_DFL);
+        signal(SIGCHLD, SIG_DFL);
+        // change mask
+        sigprocmask(SIG_SETMASK, &prev_set, NULL);
+
         execvp(argv[0], argv);
         exit(1);
     }
     
     // record this job.
     addjob(jobs, pid, state, cmdline);
+    sigprocmask(SIG_SETMASK, &prev_set, NULL);
 
     if(state == FG){
         waitfg(pid);
     }
-
-
-    /*
-    if(bg){
-        printf("bg cmd\n");
-    }else{
-        if(!builtin_cmd(argv)){
-            pid_t pid = fork();
-            if(pid < 0){
-                unix_error("fork error");
-            }
-            if(pid == 0){
-                execvp(argv[0], argv);
-            }
-            addjob(jobs, pid, FG, cmdline);
-            waitfg(pid);
-        }
-    }
-    */
     return;
 }
 
@@ -309,7 +300,29 @@ int builtin_cmd(char **argv){
  * do_bgfg - Execute the builtin bg and fg commands
  */
 void do_bgfg(char **argv){
-    
+    if(argv[1] == NULL){
+        return;
+    }
+    int is_pid = *argv[1] != '%';
+    int id = atoi((char*)(is_pid ? argv[1]: (argv[1]+1)));
+    struct job_t *job = NULL;
+    if(is_pid){
+        job = getjobpid(jobs, id);
+    }else{
+        job = getjobjid(jobs, id);
+    }
+    if(job == NULL){
+        return;
+    }
+
+    kill(job->pid, SIGCONT);
+    if(strcmp("bg", argv[0]) == 0){
+        job->state = BG;
+        return;
+    }
+
+    job->state = FG;
+    waitfg(job->pid);
     return;
 }
 
@@ -317,11 +330,7 @@ void do_bgfg(char **argv){
  * waitfg - Block until process pid is no longer the foreground process
  */
 void waitfg(pid_t pid){
-    waitpid(pid, NULL, 0);
-    struct job_t *fg_job = getjobpid(jobs, pid);
-    if(fg_job != NULL){
-        clearjob(fg_job);
-    }
+    while((pid = fgpid(jobs)) > 0){}
     return;
 }
 
@@ -341,14 +350,19 @@ void sigchld_handler(int sig){
     int pid = 0;
     while((pid = waitpid(-1, &wstatus, WNOHANG | WUNTRACED | WCONTINUED)) > 0){
         if(WIFEXITED(wstatus)){
-            printf("exit normally, exit status = %d\n", WEXITSTATUS(wstatus));
+            // printf("exit normally, exit status = %d\n", WEXITSTATUS(wstatus));
+            deletejob(jobs, pid);
         }else if(WIFSIGNALED(wstatus)){
-            printf("exit by signal, cause signal number = %d\n", WTERMSIG(wstatus));
+            // printf("exit by signal, cause signal number = %d\n", WTERMSIG(wstatus));
+            deletejob(jobs, pid);
         }else if(WIFSTOPPED(wstatus)){
-            printf("stop by signal, cause signal number = %d\n", WSTOPSIG(wstatus));
-            //kill(pid, SIGCONT);
+            // printf("stop by signal, cause signal number = %d\n", WSTOPSIG(wstatus));
+            struct job_t *job = getjobpid(jobs, pid);
+            if(job != NULL){
+                job->state = ST;
+            }
         }else if(WIFCONTINUED(wstatus)){
-            printf("SIGCONT!\n");
+            // printf("SIGCONT!\n");
         }else{
             printf("what happens?\n");
         }
