@@ -49,6 +49,9 @@ team_t team = {
 #define GET(hfp) (*(unsigned int *)(hfp))
 #define PUT(hfp, val) (*(unsigned int *)(hfp) = (val))
 
+#define FREE_PREV(bp)      ((unsigned int*)(bp))
+#define FREE_NEXT(bp)      ((unsigned int*)(bp) + 1)
+
 #define GET_ALLOC(hfp) (GET(hfp) & 0x01)
 #define GET_SIZE(hfp) (GET(hfp) & ~0x07)
 
@@ -61,6 +64,7 @@ team_t team = {
 #define BLOCK_NEXT(bp) ((char *)(bp) + GET_SIZE(HEAD(bp)))
 
 static char *heap_listp;
+static char *free_head;
 
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
@@ -73,6 +77,9 @@ static void heap_checker();
  */
 int mm_init(void)
 {
+    heap_listp = NULL;
+    free_head = NULL;
+
     if ((heap_listp = (char *)mem_sbrk(4 * WSIZE)) == (void *)(-1))
     {
         return -1;
@@ -89,7 +96,9 @@ int mm_init(void)
         return -1;
     }
 
-    // printf("mm_init:\n");
+    // free_head != NULL
+    assert(free_head != NULL);
+
     // heap_checker();
     return 0;
 }
@@ -100,14 +109,18 @@ int mm_init(void)
  */
 void *mm_malloc(size_t size)
 {
-    if (size <= 0)
-    {
+    if (size <= 0){
         return NULL;
     }
     // printf("size: %d  ", size);
+    // fflush(stdout);
+
     size = (size + DSIZE + ALIGNMENT - 1) / ALIGNMENT;
     size = ALIGNMENT * size;
+
     // printf("malloc size: %d\t", size);
+    // fflush(stdout);
+
     char *bp;
     if ((bp = find_fit(size)) != NULL)
     {
@@ -118,9 +131,10 @@ void *mm_malloc(size_t size)
     }
     if ((bp = extend_heap(MAX(size, CHUNKSIZE) / WSIZE)) == NULL)
     {
-        // printf("malloc ptr: NULL\n");
+        // printf("malloc failed: NULL\n");
         return NULL;
     }
+    // printf("\nextend heap over!\n");
     place(bp, size);
     // printf("malloc ptr: %p\n", bp);
     // heap_checker();
@@ -137,27 +151,24 @@ void mm_free(void *ptr)
     {
         return;
     }
-    // printf("free ptr: %p\n", ptr);
     size_t size = GET_SIZE(HEAD(ptr));
     PUT(HEAD(ptr), PACK(size, 0));
     PUT(HEAD(ptr), PACK(size, 0));
 
-    coalesce(ptr);
+    coalesce(ptr);  
 }
 
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
-void *mm_realloc(void *ptr, size_t size)
-{
+void *mm_realloc(void *ptr, size_t size){
+    if (size <= 0){
+        mm_free(ptr);
+        return NULL;
+    }
     if (ptr == NULL)
     {
         return mm_malloc(size);
-    }
-    if (size <= 0)
-    {
-        mm_free(ptr);
-        return NULL;
     }
 
     char *bp = (char *)mm_malloc(size);
@@ -181,15 +192,15 @@ static void *extend_heap(size_t words)
     char *brk;
     size_t size = (words % 2) ? ((words + 1) * WSIZE) : (words * WSIZE);
 
-    if ((brk = (char *)(mem_sbrk(size))) == (void *)-1)
-    {
+    if ((brk = (char *)(mem_sbrk(size))) == (void *)-1){
         return NULL;
     }
-
+    // printf("extend-heap: extend-size = %d   old brk = %p    new brk = %p\n", size, brk, mem_heap_hi()+1);
+    
     PUT(HEAD(brk), PACK(size, 0));
     PUT(FOOT(brk), PACK(size, 0));
     PUT(HEAD(BLOCK_NEXT(brk)), PACK(0, 1));
-
+    
     // coalesce
     return coalesce(brk);
 }
@@ -201,79 +212,102 @@ static void *extend_heap(size_t words)
     case 3: prev free   , next alloced
     case 4: prev free   , next free
 */
-static void *coalesce(void *bp)
-{
+static void *coalesce(void *bp){
     int prev_alloc = GET_ALLOC(HEAD(BLOCK_PREV(bp)));
     int next_alloc = GET_ALLOC(HEAD(BLOCK_NEXT(bp)));
     size_t size = GET_SIZE(HEAD(bp));
 
-    if (prev_alloc && next_alloc)
-    {
-        return bp; // case 1
-    }
-    else if (prev_alloc && !next_alloc)
-    {
-        size += GET_SIZE(HEAD(BLOCK_NEXT(bp)));
-        PUT(HEAD(bp), PACK(size, 0));
-        PUT(FOOT(bp), PACK(size, 0));
+    if (prev_alloc && next_alloc){
+        if(free_head == NULL || bp < free_head){
+            PUT(FREE_PREV(bp), NULL);
+            PUT(FREE_NEXT(bp), free_head);
+            if (free_head != NULL)
+            {
+                PUT(FREE_PREV(free_head), bp);
+            }
+            free_head = bp;
+            return bp;
+        }
+        char *work = free_head;
+        while(GET(FREE_NEXT(work)) != NULL && work < bp){
+            work = GET(FREE_NEXT(work));
+        }
+        if(work > bp){
+            PUT(FREE_PREV(bp), GET(FREE_PREV(work)));
+            PUT(FREE_NEXT(bp), work);
+
+            PUT(FREE_NEXT(GET(FREE_PREV(bp))), bp);
+            PUT(FREE_PREV(work), bp);
+        }else{
+            PUT(FREE_NEXT(work), bp);
+            
+            PUT(FREE_PREV(bp), work);
+            PUT(FREE_NEXT(bp), NULL);
+        }
         return bp;
     }
-    else if (!prev_alloc && next_alloc)
-    {
+    else if (prev_alloc && !next_alloc){
+
+        PUT(FREE_PREV(bp), GET(FREE_PREV(BLOCK_NEXT(bp))));
+        PUT(FREE_NEXT(bp), GET(FREE_NEXT(BLOCK_NEXT(bp))));
+
+        size += GET_SIZE(HEAD(BLOCK_NEXT(bp)));
+        
+        PUT(HEAD(bp), PACK(size, 0));
+        PUT(FOOT(bp), PACK(size, 0));
+
+        if(GET(FREE_NEXT(bp)) != NULL){
+            PUT(FREE_PREV(GET(FREE_NEXT(bp))), bp);
+        }
+        if(GET(FREE_PREV(bp)) != NULL){
+            PUT(FREE_NEXT(GET(FREE_PREV(bp))), bp);
+        }else{
+            free_head = bp;
+        }
+        return bp;
+    }
+    else if (!prev_alloc && next_alloc){
         char *prev_bp = BLOCK_PREV(bp);
         size += GET_SIZE(HEAD(prev_bp));
+    
         PUT(HEAD(prev_bp), PACK(size, 0));
         PUT(FOOT(prev_bp), PACK(size, 0));
         return prev_bp;
     }
-    else
-    {
+    else{
+        PUT(FREE_NEXT(BLOCK_PREV(bp)), GET(FREE_NEXT(BLOCK_NEXT(bp))));
+        if(GET(FREE_NEXT(BLOCK_NEXT(bp))) != NULL){
+            PUT(FREE_PREV(GET(FREE_NEXT(BLOCK_NEXT(bp)))), BLOCK_PREV(bp));
+        }
+
+        // PUT(FREE_PREV(bp), NULL);
+        // PUT(FREE_NEXT(bp), free_head);
+        // PUT(FREE_PREV(free_head), bp);
+        // free_head = bp;
+        // return bp;
+
+        
         size += GET_SIZE(HEAD(BLOCK_PREV(bp))) + GET_SIZE(HEAD(BLOCK_NEXT(bp)));
         bp = BLOCK_PREV(bp);
         PUT(HEAD(bp), PACK(size, 0));
         PUT(FOOT(bp), PACK(size, 0));
         return bp;
+        
     }
 }
 
 static void *find_fit(size_t size)
 {
     // first fit
-
-    char *bp = BLOCK_NEXT(heap_listp);
-    char *brk = mem_heap_hi() + 1;
-    while (bp < brk)
-    {
-        if (GET_ALLOC(HEAD(bp)) == 0 && GET_SIZE(HEAD(bp)) >= size)
-        {
+    char *bp = free_head;
+    while(bp != NULL){
+        // printf("find-fit: bp = %p  block-size = %d\n", bp, GET_SIZE(HEAD(bp)));
+        if(GET_SIZE(HEAD(bp)) >= size){
             return bp;
         }
-        bp = BLOCK_NEXT(bp);
+        bp = GET(FREE_NEXT(bp));
     }
     return NULL;
-
-    // best fit
-    /*
-   char *bp = BLOCK_NEXT(heap_listp);
-   char *brk = mem_heap_hi() + 1;
-   char *res = NULL;
-   while(bp < brk){
-       if(GET_ALLOC(HEAD(bp)) == 0 && GET_SIZE(HEAD(bp)) >= size){
-           res = bp;
-           break;
-       }
-       bp = BLOCK_NEXT(bp);
-   }
-   while(bp < brk){
-       if (GET_ALLOC(HEAD(bp)) == 0 && GET_SIZE(HEAD(bp)) >= size){
-           if(GET_SIZE(HEAD(bp)) < GET_SIZE(HEAD(res))){
-               res = bp;
-           }
-       }
-       bp = BLOCK_NEXT(bp);
-   }
-    return res;
-    */
 }
 
 static void place(void *bp, size_t size)
@@ -281,27 +315,60 @@ static void place(void *bp, size_t size)
     int left_size = GET_SIZE(HEAD(bp)) - size;
     if (left_size < (2 * DSIZE))
     {
+        if(GET(FREE_PREV(bp)) == NULL){
+            free_head = GET(FREE_NEXT(bp));
+            if(free_head != NULL){
+                PUT(FREE_PREV(free_head), NULL);
+            }
+        }else{
+            PUT(FREE_NEXT(GET(FREE_PREV(bp))), GET(FREE_NEXT(bp)));
+            if(GET(FREE_NEXT(bp)) != NULL){
+                PUT(FREE_PREV(GET(FREE_NEXT(bp))), GET(FREE_PREV(bp)));
+            }
+        }
+
         PUT(HEAD(bp), PACK(left_size + size, 1));
         PUT(FOOT(bp), PACK(left_size + size, 1));
     }
-    else
-    {
+    else{
         PUT(HEAD(bp), PACK(size, 1));
         PUT(FOOT(bp), PACK(size, 1));
 
         char *next_bp = BLOCK_NEXT(bp);
         PUT(HEAD(next_bp), PACK(left_size, 0));
         PUT(FOOT(next_bp), PACK(left_size, 0));
+
+        PUT(FREE_PREV(next_bp), GET(FREE_PREV(bp)));
+        PUT(FREE_NEXT(next_bp), GET(FREE_NEXT(bp)));
+
+        if(GET(FREE_PREV(bp)) != NULL){
+            PUT(FREE_NEXT(GET(FREE_PREV(bp))), next_bp);
+        }
+        if(GET(FREE_NEXT(bp)) != NULL){
+            PUT(FREE_PREV(GET(FREE_NEXT(bp))), next_bp);
+        }
+
+        if(GET(FREE_PREV(bp)) == NULL){
+            free_head = next_bp;
+        }
     }
 }
 
-static void heap_checker()
-{
+static void heap_checker(){
+    return;
     char *bp = BLOCK_NEXT(heap_listp);
     char *brk = mem_heap_hi() + 1;
-    while (bp < brk)
+    printf("\n*******************heap_checker: free_head = %p brk = %p\n", free_head, brk);
+    while (bp != NULL && bp < brk)
     {
-        printf("%d-%d   bp = %p, brk = %p\n", GET_SIZE(HEAD(bp)), GET_ALLOC(HEAD(bp)), bp, brk);
+        printf("%d-%d   bp = %p\n", GET_SIZE(HEAD(bp)), GET_ALLOC(HEAD(bp)), bp);
         bp = BLOCK_NEXT(bp);
     }
+    // printf("\n******************\n");
+    // bp = free_head;
+    // while(bp != NULL && bp < brk){
+    //     printf("%d-%d   bp = %p\n", GET_SIZE(HEAD(bp)), GET_ALLOC(HEAD(bp)), bp);
+    //     bp = GET(FREE_NEXT(bp));    
+    // }
+    printf("end heap checker!\n");
 }
