@@ -1,0 +1,21 @@
+Team Name:lambdafate
+Member 1 :Wu:lambdafate@163.com
+Using default tracefiles in traces/
+Measuring performance with gettimeofday().
+
+Results for mm malloc:
+trace  valid  util     ops      secs  Kops
+ 0       yes   99%    5694  0.010596   537
+ 1       yes   99%    5848  0.009534   613
+ 2       yes   99%    6648  0.017303   384
+ 3       yes  100%    5380  0.011983   449
+ 4       yes   66%   14400  0.000153 93995
+ 5       yes   92%    4800  0.008964   535
+ 6       yes   92%    4800  0.008301   578
+ 7       yes   55%   12000  0.117588   102
+ 8       yes   51%   24000  0.393068    61
+ 9       yes   27%   14401  0.121675   118
+10       yes   34%   14401  0.003266  4410
+Total          74%  112372  0.702431   160
+
+Perf index = 44 (util) + 11 (thru) = 55/100
